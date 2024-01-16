@@ -1,0 +1,72 @@
+#!/usr/bin/env python
+
+import os
+import sys
+import torch
+from carvekit.ml.files.models_loc import tracer_b7_pretrained
+from carvekit.web.schemas.config import MLConfig
+from carvekit.web.utils.init_utils import init_interface
+from diffusers import DiffusionPipeline, AutoencoderKL
+
+
+# append project directory to path so predict.py can be imported
+sys.path.append('.')
+from predict import MODEL_NAME, SDXL_REFINER, CONTROL_MODEL, SDXL_CACHE, REFINER_CACHE, RM_CACHE, CONTROL_CACHE
+
+
+# Make cache folders
+if not os.path.exists(SDXL_CACHE):
+    os.makedirs(SDXL_CACHE)
+if not os.path.exists(RM_CACHE):
+    os.makedirs(RM_CACHE)
+if not os.path.exists(CONTROL_CACHE):
+    os.makedirs(CONTROL_CACHE)
+
+
+# SD-XL-Base-1.0 refiner
+pipe = DiffusionPipeline.from_pretrained(
+    SDXL_REFINER,
+    torch_dtype=torch.float16,
+    use_safetensors=True,
+    variant="fp16",
+)
+pipe.save_pretrained(REFINER_CACHE, safe_serialization=True)
+
+
+# Download SDXL-VAE-FP16-Fix
+better_vae = AutoencoderKL.from_pretrained(
+    "madebyollin/sdxl-vae-fp16-fix",
+    torch_dtype=torch.float16,
+)
+
+# SD-XL-Base-1.0
+pipe = DiffusionPipeline.from_pretrained(
+    MODEL_NAME,
+    vae=better_vae,
+    torch_dtype=torch.float16,
+    use_safetensors=True,
+    variant="fp16",
+)
+pipe.save_pretrained(SDXL_CACHE, safe_serialization=True)
+
+
+
+# Background removal model
+tracer_b7_pretrained()
+model = init_interface(
+    MLConfig(
+        segmentation_network="tracer_b7",
+        preprocessing_method="none",
+        postprocessing_method="fba",
+        seg_mask_size=640,
+        trimap_dilation=30,
+        trimap_erosion=5,
+        device='cpu'
+    )
+)
+
+if not os.path.exists(RM_CACHE):
+    os.makedirs(RM_CACHE)
+
+os.system("cp /root/.cache/carvekit/checkpoints/tracer_b7/tracer_b7.pth "+RM_CACHE)
+os.system("cp /root/.cache/carvekit/checkpoints/fba/fba_matting.pth "+RM_CACHE)
